@@ -1,20 +1,19 @@
 #include <ESP8266WiFi.h>          // Replace with WiFi.h for ESP32
-#include <ESP8266WebServer.h>     // Replace with WebServer.h for ESP32
-#include <AutoConnect.h>
+//#include <ESP8266WebServer.h>     // Replace with WebServer.h for ESP32
+#include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 #include <EasyButton.h>
 
 // Arduino pin where the Flash button is connected to
 #define BUTTON_FLASH 0
 
-ESP8266WebServer Server;          // Replace with WebServer for ESP32
-AutoConnect      Portal(Server);
-AutoConnectConfig acConfig;
+//ESP8266WebServer Server;          // Replace with WebServer for ESP32
+WiFiManager wifiManager;
 EasyButton flashButton(BUTTON_FLASH);
 
-void rootPage() {
-  char content[] = "Hello, world";
-  Server.send(200, "text/plain", content);
-}
+//void rootPage() {
+//  char content[] = "Hello, world";
+//  Server.send(200, "text/plain", content);
+//}
 
 void buttonISR()
 {
@@ -23,15 +22,11 @@ void buttonISR()
 
 // Callback function to be called when the button is pressed.
 void onPressed() {
-    Serial.println("Button has been pressed!");
-    acConfig.immediateStart = true;
-    acConfig.autoRise = true;
-}
-
-void connect() {
-  if (Portal.begin()) {
-    Serial.println("WiFi connected: IP = " + WiFi.localIP().toString());
-  }
+  Serial.println("Button has been pressed!");
+  WiFiManager wifiManager;
+  ESP.eraseConfig();
+  delay(500);
+  ESP.restart();
 }
 
 void setup() {
@@ -40,16 +35,17 @@ void setup() {
 
   Serial.begin(115200);
   String deviceName = "GarageDoor-" + String(ESP.getChipId(), HEX);
-  Serial.println("\nHello! Device name = " + deviceName);
+  Serial.print("\nHello! Device name = ");
+  Serial.println(deviceName);
 
-  Server.on("/", rootPage);
+  //Server.on("/", rootPage);
 
   // Captive portal for first-time WiFi setup
-  acConfig.apid = deviceName;
-  acConfig.hostName = deviceName;
-  //acConfig.immediateStart = true;
-  Portal.config(acConfig);
-  connect();
+  //wifiManager.setHostname(deviceName);
+  WiFi.hostname(deviceName);
+  wifiManager.autoConnect(deviceName.c_str(), NULL);
+  WiFi.hostname(deviceName);
+  Serial.println("WiFi connected: IP = " + WiFi.localIP().toString());
 
   // Flash button to reset
   flashButton.begin();
@@ -59,17 +55,20 @@ void setup() {
     Serial.println("interrupt enabled");
     flashButton.enableInterrupt(buttonISR);
   }
+
+// Always run web portal
+  wifiManager.startWebPortal();
 }
 
 // the loop function runs over and over again forever
 void loop() {
-  Portal.handleClient();
+  wifiManager.process();
   flashButton.read();
   
   digitalWrite(LED_BUILTIN, LOW);   // Turn the LED on (Note that LOW is the voltage level
   // but actually the LED is on; this is because
   // it is active low on the ESP-01)
-  delay(1000);                      // Wait for a second
+  delay(250);                      // Wait for a second
   digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED off by making the voltage HIGH
-  delay(2000);                      // Wait for two seconds (to demonstrate the active low LED)
+  delay(500);                      // Wait for two seconds (to demonstrate the active low LED)
 }
