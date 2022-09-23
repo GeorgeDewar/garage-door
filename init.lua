@@ -1,1 +1,0 @@
-enduser_setup.start(string.format("GarageDoor_%06x", node.chipid()));
