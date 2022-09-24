@@ -45,9 +45,9 @@ void onPressed() {
 }
 
 void pressDoorButton() {
-  digitalWrite(OUTPUT_PUSH_BUTTON, LOW); // depress the button
-  delay(200);
-  digitalWrite(OUTPUT_PUSH_BUTTON, HIGH); // back to high impedance
+  digitalWrite(OUTPUT_PUSH_BUTTON, HIGH); // depress the button
+  delay(500);
+  digitalWrite(OUTPUT_PUSH_BUTTON, LOW); // back to high impedance
 }
 
 void onConnectionEstablished()
@@ -77,12 +77,14 @@ void setup() {
   pinMode(BUTTON_FLASH, INPUT_PULLUP);
   pinMode(LED_BUILTIN, OUTPUT);     // Initialize the LED_BUILTIN pin as an output
 
-  pinMode(OUTPUT_PUSH_BUTTON, OUTPUT_OPEN_DRAIN);
+  pinMode(OUTPUT_PUSH_BUTTON, OUTPUT);
   pinMode(OUTPUT_24V_LED, OUTPUT);
   pinMode(INPUT_DOOR_OPEN, INPUT);
   pinMode(INPUT_DOOR_CLOSED, INPUT);
 
   digitalWrite(LED_BUILTIN, LOW); // Turn the LED on
+  digitalWrite(OUTPUT_PUSH_BUTTON, LOW); // Don't be pressing the button
+  digitalWrite(OUTPUT_24V_LED, LOW); // Main LED off to start with
 
   Serial.begin(115200);
   String deviceName = "GarageDoor-" + String(ESP.getChipId(), HEX);
