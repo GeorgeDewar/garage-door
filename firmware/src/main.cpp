@@ -26,18 +26,11 @@ char mqtt_server[40];
 WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
 
 enum DoorState {
-  OPENING,
   OPEN,
-  CLOSING,
-  CLOSED,
-  UNKNOWN
-};
-
-enum DoorSensorState {
-  OPEN,
-  CLOSED,
+  DOOR_CLOSED,
   PARTIAL,
-  INVALID
+  INVALID,
+  UNKNOWN
 };
 
 DoorState door_state = UNKNOWN;
@@ -73,6 +66,7 @@ void onConnectionEstablished()
 
   // Publish a message to "mytopic/test"
   mqttClient.publish("garage-door/availability", "online");
+  door_state = DoorState::UNKNOWN;
   //mqttClient.publish("garage-door/state", "open"); // You can activate the retain flag by setting the third parameter to true
 }
 
@@ -144,46 +138,48 @@ void loop() {
 
   int doorClosed = digitalRead(INPUT_DOOR_CLOSED);
   int doorOpen = digitalRead(INPUT_DOOR_OPEN);
-  DoorSensorState state;
+  DoorState new_state;
   if (doorClosed == LOW && doorOpen == HIGH) {
-    state = DoorSensorState::CLOSED;
+    new_state = DoorState::DOOR_CLOSED;
   } else if (doorClosed == HIGH && doorOpen == LOW) {
-    state = DoorSensorState::OPEN;
+    new_state = DoorState::OPEN;
   } else if (doorClosed == HIGH && doorOpen == HIGH) {
-    state = DoorSensorState::PARTIAL;
+    new_state = DoorState::PARTIAL;
   } else {
-    state = DoorSensorState::INVALID;
+    new_state = DoorState::INVALID;
   }
 
-  if (state == DoorSensorState::CLOSED && door_state != DoorState::CLOSED) {
+  // Can only proceed if MQTT is connected
+  if (!mqttClient.isConnected()) return;
+
+  // Nothing has changed
+  if (door_state == new_state) return;
+
+  if (new_state == DoorState::DOOR_CLOSED) {
     Serial.println("Door has closed");
     mqttClient.publish("garage-door/state", "closed");
-    door_state = DoorState::CLOSED;
-  } else if (state == DoorSensorState::OPEN && door_state != DoorState::OPEN) {
+  } else if (new_state == DoorState::OPEN) {
     Serial.println("Door has opened");
     mqttClient.publish("garage-door/state", "open");
-    door_state = DoorState::OPEN;
-  } else if (state == DoorSensorState::PARTIAL && door_state == DoorState::OPEN) {
+  } else if (new_state == DoorState::PARTIAL && door_state == DoorState::OPEN) {
     // transition from OPEN to PARTIAL means we are closing
     Serial.println("Door is closing");
     mqttClient.publish("garage-door/state", "closing");
-    door_state = DoorState::CLOSING;
-  } else if (state == DoorSensorState::PARTIAL && door_state == DoorState::CLOSED) {
+  } else if (new_state == DoorState::PARTIAL && door_state == DoorState::DOOR_CLOSED) {
     // transition from CLOSED to PARTIAL means we are opening
     Serial.println("Door is opening");
     mqttClient.publish("garage-door/state", "opening");
-    door_state = DoorState::OPENING;
-  } else if (state == DoorSensorState::PARTIAL && door_state == DoorState::UNKNOWN) {
+  } else if (new_state == DoorState::PARTIAL && door_state == DoorState::UNKNOWN) {
     // it must have been partially open on start-up
     Serial.println("Door is partially open, assuming closing");
     mqttClient.publish("garage-door/state", "closing");
-    door_state = DoorState::CLOSING;
-  } else if (state == DoorSensorState::INVALID && door_state != DoorState::CLOSING) {
+  } else if (new_state == DoorState::INVALID) {
     // we have a problem
     Serial.println("Door state is invalid (both microswitches LOW)");
     mqttClient.publish("garage-door/state", "closing");
-    door_state = DoorState::CLOSING;
   }
+
+  door_state = new_state;
 
   delay(100);
 }
