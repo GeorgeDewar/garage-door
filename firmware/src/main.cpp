@@ -11,6 +11,10 @@
 #define INPUT_DOOR_OPEN     D5
 #define INPUT_DOOR_CLOSED   D6
 
+// Flashing speeds
+#define FLASHING_SLOW_MS    500
+#define FLASHING_FAST_MS    250
+
 //ESP8266WebServer Server;          // Replace with WebServer for ESP32
 WiFiManager wifiManager;
 EasyButton flashButton(BUTTON_FLASH);
@@ -34,6 +38,8 @@ enum DoorState {
 };
 
 DoorState door_state = UNKNOWN;
+unsigned long lastBlinkMillis = 0; // when the loop function last ran
+int lastFlashingState = LOW;
 
 void buttonISR()
 {
@@ -66,8 +72,7 @@ void onConnectionEstablished()
 
   // Publish a message to "mytopic/test"
   mqttClient.publish("garage-door/availability", "online");
-  door_state = DoorState::UNKNOWN;
-  //mqttClient.publish("garage-door/state", "open"); // You can activate the retain flag by setting the third parameter to true
+  door_state = DoorState::UNKNOWN; // this will force a status update
 }
 
 void flashLed(int times) {
@@ -147,6 +152,21 @@ void loop() {
     new_state = DoorState::PARTIAL;
   } else {
     new_state = DoorState::INVALID;
+  }
+
+  // Handle the LED output
+  if (door_state == DoorState::DOOR_CLOSED) {
+    digitalWrite(OUTPUT_24V_LED, LOW);
+  } else if (door_state == DoorState::OPEN) {
+    digitalWrite(OUTPUT_24V_LED, HIGH);
+  } else {
+    // we are flashing
+    unsigned long currentTime = millis();
+    if (currentTime > lastBlinkMillis + FLASHING_SLOW_MS) {
+      lastBlinkMillis = currentTime;
+      lastFlashingState = 1 - lastFlashingState;
+      digitalWrite(OUTPUT_24V_LED, lastFlashingState);
+    }
   }
 
   // Can only proceed if MQTT is connected
