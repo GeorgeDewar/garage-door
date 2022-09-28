@@ -1,11 +1,10 @@
-#include <ESP8266WiFi.h>          // Replace with WiFi.h for ESP32
-//#include <ESP8266WebServer.h>     // Replace with WebServer.h for ESP32
-#include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
+#include <ESP8266WiFi.h>
+#include <WiFiManager.h>
 #include <EasyButton.h>
-#include "EspMQTTClient.h"
+#include <EspMQTTClient.h>
 
-// Arduino pin where the Flash button is connected to
-#define BUTTON_FLASH 0
+// NodeMCU board pins
+#define BUTTON_FLASH        D3
 #define OUTPUT_PUSH_BUTTON  D1
 #define OUTPUT_24V_LED      D2
 #define INPUT_DOOR_OPEN     D5
@@ -15,7 +14,16 @@
 #define FLASHING_SLOW_MS    500
 #define FLASHING_FAST_MS    250
 
-//ESP8266WebServer Server;          // Replace with WebServer for ESP32
+// Possible states for the door to be in, based on the microswitch positions
+enum DoorState {
+  OPEN,
+  DOOR_CLOSED,
+  PARTIAL,      // neither open nor closed, which means opening, closing, or just stopped part way
+  INVALID,      // i.e. both open and closed, shouldn't be possible
+  UNKNOWN       // the default state prior to reading it for the first time, or to force an update
+};
+
+// Objects
 WiFiManager wifiManager;
 EasyButton flashButton(BUTTON_FLASH);
 EspMQTTClient mqttClient(
@@ -25,57 +33,50 @@ EspMQTTClient mqttClient(
   "DVES_PASS",     // Omit this parameter to disable MQTT authentification
   "GarageDoor");
 
-char printbuf[128];
-char mqtt_server[40];
-WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
-
-enum DoorState {
-  OPEN,
-  DOOR_CLOSED,
-  PARTIAL,
-  INVALID,
-  UNKNOWN
-};
-
+// Variables
 DoorState door_state = UNKNOWN;
 unsigned long lastBlinkMillis = 0; // when the loop function last ran
 int lastFlashingState = LOW;
 
-void buttonISR()
+// Interrupt service routine for the interrupt triggered by the Flash button
+void flashButtonISR()
 {
   flashButton.read();
 }
 
-// Callback function to be called when the button is pressed.
-void onPressed() {
-  Serial.println("Button has been pressed!");
-  WiFiManager wifiManager;
+// Callback function to be called when the Flash button is pressed. Erase all configuration.
+void onFlashButtonPressed() {
+  Serial.println("Flash button has been pressed! Resetting...");
   ESP.eraseConfig();
   delay(500);
   ESP.restart();
 }
 
+// Simulate a press of the open/close button
 void pressDoorButton() {
   digitalWrite(OUTPUT_PUSH_BUTTON, HIGH); // depress the button
   delay(250);
   digitalWrite(OUTPUT_PUSH_BUTTON, LOW); // back to high impedance
 }
 
+// Called when MQTT connection established
 void onConnectionEstablished()
 {
-  // Here you are sure that everything is connected.
-  // Subscribe to "mytopic/test" and display received message to Serial
+  // Subscribe to commands. For any command, we press the button. That's all we can do.
   mqttClient.subscribe("garage-door/command", [](const String & payload) {
     Serial.println(payload);
     pressDoorButton();
   });
 
-  // Publish a message to "mytopic/test"
+  // Announce that we are online
   mqttClient.publish("garage-door/availability", "online");
-  door_state = DoorState::UNKNOWN; // this will force a status update
+
+  // Force a status update, in case we've been offline for a while
+  door_state = DoorState::UNKNOWN;
 }
 
-void flashLed(int times) {
+// Flash the internal LED the specified number of times
+void flashBuiltInLed(int times) {
   for(int i=0; i<times; i++) {
     digitalWrite(LED_BUILTIN, LOW);
     delay(200);
@@ -84,59 +85,58 @@ void flashLed(int times) {
   }
 }
 
+// Called once on startup
 void setup() {
+  // Initialise our inputs and outputs
   pinMode(BUTTON_FLASH, INPUT_PULLUP);
-  pinMode(LED_BUILTIN, OUTPUT);     // Initialize the LED_BUILTIN pin as an output
-
-  pinMode(OUTPUT_PUSH_BUTTON, OUTPUT);
-  pinMode(OUTPUT_24V_LED, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(OUTPUT_PUSH_BUTTON, OUTPUT);    // note: when low, the external transistor is high impedance (floating)
+  pinMode(OUTPUT_24V_LED, OUTPUT);        // note: when low, the external transistor is high impedance (floating)
   pinMode(INPUT_DOOR_OPEN, INPUT);
   pinMode(INPUT_DOOR_CLOSED, INPUT);
 
-  digitalWrite(LED_BUILTIN, LOW); // Turn the LED on
-  digitalWrite(OUTPUT_PUSH_BUTTON, LOW); // Don't be pressing the button
-  digitalWrite(OUTPUT_24V_LED, LOW); // Main LED off to start with
+  // Write the initial states of our outputs
+  digitalWrite(LED_BUILTIN, LOW);         // Turn the LED on
+  digitalWrite(OUTPUT_PUSH_BUTTON, LOW);  // Don't be pressing the button
+  digitalWrite(OUTPUT_24V_LED, LOW);      // Main LED off to start with
 
+  // Begin serial communication for debugging
   Serial.begin(115200);
+
+  // Work out and announce our device name
   String deviceName = "GarageDoor-" + String(ESP.getChipId(), HEX);
   Serial.print("\nHello! Device name = ");
   Serial.println(deviceName);
 
-  //Server.on("/", rootPage);
-
   // Captive portal for first-time WiFi setup
-  wifiManager.addParameter(&custom_mqtt_server);
-  wifiManager.autoConnect(deviceName.c_str(), NULL);
-  WiFi.hostname(deviceName);
-  Serial.println("WiFi connected: IP = " + WiFi.localIP().toString());
+  wifiManager.setConfigPortalTimeout(120); // after two minutes, give up on connecting
+  if (wifiManager.autoConnect(deviceName.c_str(), NULL)) {
+    // We're connected, so we set the host name and announce our IP address
+    WiFi.hostname(deviceName);
+    Serial.println("WiFi connected: IP = " + WiFi.localIP().toString());
 
-  // Store additional parameters
-  //mqtt_server = custom_mqtt_server.getValue();
-//  if (strlen(mqtt_server) > 0) {
-//    sprintf(printbuf, "MQTT server: %s", mqtt_server);
-//    Serial.println(printbuf);
-//  }
+    // Always run the web portal so the device can be reconfigured
+    wifiManager.startWebPortal();
+  } else {
+    Serial.println("Failed to connect to WiFi; in offline mode");
+  }
+
+  // Configure the MQTT client
   mqttClient.enableDebuggingMessages();
   mqttClient.enableLastWillMessage("garage-door/availability", "offline");
 
-  // Flash button to reset
+  // Configure the Flash button
   flashButton.begin();
-  flashButton.onPressed(onPressed);
-  if (flashButton.supportsInterrupt())
-  {
-    Serial.println("interrupt enabled");
-    flashButton.enableInterrupt(buttonISR);
-  }
+  flashButton.onPressed(onFlashButtonPressed);
+  flashButton.enableInterrupt(flashButtonISR);
 
-  // Always run web portal
-  wifiManager.startWebPortal();
-
-  // Flash to indicate startup complete
-  flashLed(3); // really 2 as LED already on
+  // Flash built-in LED to indicate startup complete
+  flashBuiltInLed(3); // really 2 flashes as LED already on
 }
 
 // the loop function runs over and over again forever
 void loop() {
+  // Let the libraries do their processing
   flashButton.read();
   wifiManager.process();
   mqttClient.loop();
