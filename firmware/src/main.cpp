@@ -57,7 +57,7 @@ void onPressed() {
 
 void pressDoorButton() {
   digitalWrite(OUTPUT_PUSH_BUTTON, HIGH); // depress the button
-  delay(500);
+  delay(250);
   digitalWrite(OUTPUT_PUSH_BUTTON, LOW); // back to high impedance
 }
 
@@ -137,10 +137,11 @@ void setup() {
 
 // the loop function runs over and over again forever
 void loop() {
-  wifiManager.process();
   flashButton.read();
+  wifiManager.process();
   mqttClient.loop();
 
+  // Determine the state of the door based on the microswitches
   int doorClosed = digitalRead(INPUT_DOOR_CLOSED);
   int doorOpen = digitalRead(INPUT_DOOR_OPEN);
   DoorState new_state;
@@ -155,9 +156,9 @@ void loop() {
   }
 
   // Handle the LED output
-  if (door_state == DoorState::DOOR_CLOSED) {
+  if (new_state == DoorState::DOOR_CLOSED) {
     digitalWrite(OUTPUT_24V_LED, LOW);
-  } else if (door_state == DoorState::OPEN) {
+  } else if (new_state == DoorState::OPEN) {
     digitalWrite(OUTPUT_24V_LED, HIGH);
   } else {
     // we are flashing
@@ -169,12 +170,11 @@ void loop() {
     }
   }
 
-  // Can only proceed if MQTT is connected
-  if (!mqttClient.isConnected()) return;
-
-  // Nothing has changed
+  // If nothing has changed, then there's nothing else we need to do
   if (door_state == new_state) return;
 
+  // Figure out what message to publish based on the old and new state
+  // Publishing will do nothing if the client is not connected
   if (new_state == DoorState::DOOR_CLOSED) {
     Serial.println("Door has closed");
     mqttClient.publish("garage-door/state", "closed");
@@ -199,7 +199,6 @@ void loop() {
     mqttClient.publish("garage-door/state", "closing");
   }
 
+  // Now update door_state since we don't need the old value any more
   door_state = new_state;
-
-  delay(100);
 }
